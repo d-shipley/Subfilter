@@ -114,3 +114,7 @@ tests/reference_figures
 *.nc
 *.pickle
 
+# Temporary files
+\#*.*\#
+.\#*
+*.*~
