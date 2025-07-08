@@ -6,9 +6,14 @@ Created on Wed Mar  9 17:14:58 2022
 """
 import numpy as np
 import xarray as xr
+import sys
 filename = 'test.nc'
 
-run_pass = 1
+run_pass = int(sys.argv[1])
+if run_pass not in [0,1]:
+    print(f"run_pass must be either 0 or 1! Got {run_pass}")
+    sys.exit(1)
+    
 if run_pass == 0:
 
     u = xr.DataArray(data = np.arange(20, dtype=float),

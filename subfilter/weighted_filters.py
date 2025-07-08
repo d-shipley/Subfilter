@@ -32,7 +32,7 @@ class Filter :
             wavenumber.
         delta_x: float
             Distance between points in the horizontal,
-            used to calculate the filter
+            used to caculate the filter
         width: int
             If set, controls the width of the filter. Must be set for
             running-mean filter.
@@ -52,13 +52,15 @@ class Filter :
             Exponent in general Gaussian (default=2.0). 
         ndim: int
             Number of dimensions (default=2)
+        weight_field: xarray.DataArray
+            Field of weights to apply to target field before filtering.
 
     """
 
     def __init__(self, filter_id, filter_name,
                  delta_x=1000.0, cutoff=0.000001, npoints = None,
                  high_pass=0, wavenumber=-1, width=-1, sigma=-1, alpha=2.0,
-                 ndim=2, set_fft=False):
+                 ndim=2, set_fft=False, weight_field=None):
 
         rfft = None
 

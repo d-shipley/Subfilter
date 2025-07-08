@@ -27,6 +27,13 @@ from monc_utils.data_utils.dask_utils import re_chunk
 
 from loguru import logger
 
+# Global constants
+#===============================================================================
+from sys import float_info
+eps = float_info.min # smallest possible float
+
+#===============================================================================
+
 def subfilter_options(config_file:str=None):
     """
     Set default options for filtering.
@@ -115,6 +122,82 @@ def filter_variable_list(source_dataset, ref_dataset, derived_dataset,
 
     return var_list
 
+def weighted_filter_variable_list(source_dataset, ref_dataset, derived_dataset,
+                         filtered_dataset, options, filter_def,
+                         var_list=None, grid='p', weights=None) :
+    """
+    Create filtered versions of input variables on required grid.
+
+    Stored in derived_dataset.
+
+    Parameters
+    ----------
+        source_dataset  : NetCDF dataset for input
+        ref_dataset     : NetCDF dataset for input containing reference
+                          profiles. Can be None
+        derived_dataset : NetCDF dataset for derived data
+        filtered_dataset: NetCDF dataset for derived data
+        options         : General options e.g. FFT method used.
+        filter_def      : 1 or 2D filter
+        var_list=None   : List of variable names.
+        default provided by get_default_variable_list()
+        grid='p'        : Grid - 'u','v','w' or 'p'
+        weights=None    : Xarray Dataset of weights for weighted
+                          filtering.
+
+    Returns
+    -------
+        list : list of strings representing variable names.
+
+    """
+    if (var_list==None):
+        var_list = get_default_variable_list()
+        logger.info("Filtering with default list:\n",var_list)
+
+    if weights is not None:
+        #TODO: check weights are on the right grid!
+        for wname in weights:
+            for vin in var_list:
+                op_var = get_data_on_grid(source_dataset, ref_dataset, vin, 
+                                   derived_dataset=derived_dataset,
+                                   options=options,
+                                   grid=grid)
+                v = op_var.name
+                ncvar_r, ncvar_s = weighted_filter_field(
+                    op_var,
+                    filtered_dataset,
+                    options,
+                    filter_def,
+                    weight=weights[wname]
+                )
+
+    else:
+        for vin in var_list:
+
+            op_var  = get_data_on_grid(source_dataset, ref_dataset, vin, 
+                                       derived_dataset=derived_dataset,
+                                       options=options,
+                                       grid=grid, 
+                      )
+
+            v = op_var.name
+
+            # looks like the same if statement appears in filter_field
+            # so is probably redundant here
+            if f'f({v})_r' not in filtered_dataset['ds'].variables \
+               or f'f({v})_s' not in filtered_dataset['ds'].variables:
+
+                ncvar_r, ncvar_s = filter_field(op_var,
+                                                filtered_dataset,
+                                                options, 
+                                                filter_def)
+            else:
+                logger.info(
+                    f'f({v})_r and f({v})_s already in output dataset.'
+                )
+
+    return var_list
+
 def filter_variable_pair_list(source_dataset, ref_dataset, derived_dataset,
                               filtered_dataset, options, filter_def,
                               var_list=None, grid='p') :
@@ -158,6 +241,74 @@ def filter_variable_pair_list(source_dataset, ref_dataset, derived_dataset,
                 save_field(filtered_dataset, f)
 
             save_field(derived_dataset, var1var2)
+
+    return var_list
+
+def weighted_filter_variable_pair_list(source_dataset, ref_dataset, derived_dataset,
+                              filtered_dataset, options, filter_def,
+                                       var_list=None, grid='p', weights=None) :
+    """
+    Create filtered versions of pairs input variables on A grid.
+
+    Stored in derived_dataset.
+
+    Args:
+        source_dataset  : NetCDF dataset for input
+        ref_dataset     : NetCDF dataset for input containing reference
+                          profiles. Can be None
+        derived_dataset : NetCDF dataset for derived data
+        filtered_dataset: NetCDF dataset for derived data
+        options         : General options e.g. FFT method used.
+        filter_def      : 1 or 2D filter
+        var_list=None   : List of variable names.
+        default provided by get_default_variable_pair_list()
+        weights=None    : xr.Dataset of weights for weighted filtering
+
+    Returns
+    -------
+        var_list : list of lists of pairs strings representing variable names.
+
+    """
+    if (var_list==None):
+        var_list = get_default_variable_pair_list()
+        logger.info("Default list:\n",var_list)
+
+    if weights is not None:
+        for wname in weights:
+            for v in var_list:
+
+                logger.info(f"Calculating s({v[0]:s},{v[1]:s})")
+                svars = weighted_quadratic_subfilter(
+                    source_dataset, ref_dataset, derived_dataset, filtered_dataset,
+                    options, filter_def, v[0], v[1], grid=grid, weight=weights[wname]
+                )
+                
+                (s_var1var2, var1var2, var1var2_r, var1var2_s) = svars
+                
+                save_field(filtered_dataset, s_var1var2)
+                if options['save_all'].lower() == 'yes':
+                    for f in ( var1var2_r, var1var2_s):
+                        save_field(filtered_dataset, f)
+
+                    save_field(derived_dataset, var1var2)
+
+    else:
+        for v in var_list:
+
+            logger.info(f"Calculating s({v[0]:s},{v[1]:s})")
+            svars = weighted_quadratic_subfilter(
+                source_dataset, ref_dataset, derived_dataset, filtered_dataset,
+                options, filter_def, v[0], v[1], grid=grid, weights=None
+            )
+
+            (s_var1var2, var1var2, var1var2_r, var1var2_s) = svars
+
+            save_field(filtered_dataset, s_var1var2)
+            if options['save_all'].lower() == 'yes':
+                for f in ( var1var2_r, var1var2_s):
+                    save_field(filtered_dataset, f)
+
+                save_field(derived_dataset, var1var2)
 
     return var_list
 
@@ -534,6 +685,99 @@ def filter_field(var, filtered_dataset, options, filter_def) :
 
     return (var_r, var_s)
 
+def weighted_filter_field(var, filtered_dataset, options, filter_def, weight=None,
+                          weight_eps=1e-6, save=True) :
+    """
+    Create filtered versions of input variable, stored in filtered_dataset.
+
+    Args:
+        var            : dict cantaining variable info
+        filtered_dataset : NetCDF dataset for derived data.
+        options         : General options e.g. FFT method used.
+        filter_def      : 1 or 2D filter.
+        default provided by get_default_variable_list()
+        weight          : xarray DataArray for weight field (e.g. density, indicator function)
+
+    Returns
+    -------
+        ncvar_r, ncvar_s   : Resolved and subfilter fields as netcf variables in
+                             filtered_dataset.
+        weight_r, weight_s : Resolved and subfilter weight field as NetCDF variables in
+                             filtered_dataset (optional)
+
+    """
+
+    vname = 'f('+var.name+')'
+
+    if weight is not None:
+        wname = weight.name
+        wname_r = 'f('+wname+')_r'
+        wname_s = 'f('+wname+')_s'
+        vname = vname+'_'+wname+'-weighted'
+        if wname_r in filtered_dataset['ds'] and wname_s in filtered_dataset['ds']:
+
+            logger.info(f"Reading {wname_r}, {wname_s}")
+            weight_r = filtered_dataset['ds'][wname_r]
+            weight_s = filtered_dataset['ds'][wname_s]
+        else:
+
+            logger.info(f"Filtering {wname:s}")
+
+            # Calculate resolved and unresolved parts of weight
+
+            (weight_r, weight_s) = filtered_field_calc(
+                weight,
+                options,
+                filter_def
+            )
+
+            print("\n\n\n",weight_r)
+            print("\n\n\n",weight_s)
+
+            if save:
+                weight_r = save_field(filtered_dataset, weight_r)
+                weight_s = save_field(filtered_dataset, weight_s)
+            
+    vname_r = vname+'_r'
+    vname_s = vname+'_s'
+
+    if vname_r in filtered_dataset['ds'] and vname_s in filtered_dataset['ds']:
+
+        logger.info(f"Reading {vname_r}, {vname_s}")
+        var_r = filtered_dataset['ds'][vname_r]
+        var_s = filtered_dataset['ds'][vname_s]
+
+    else:
+
+        logger.info(f"Filtering {vname:s}")
+
+        # Calculate resolved and unresolved parts of var
+
+        if weight is not None:
+            weighted_var = weight*var
+            weighted_var.name = weight.name+'.'+var.name
+
+            (_var_r, _var_s) = filtered_field_calc(weighted_var, options, filter_def)
+
+            # fill value has to be zero, not np.nan, so as not to break sum rules
+            var_r = xr.where(weight_r > weight_eps, _var_r/weight_r, 0.0)
+            var_s = xr.where(weight_r > weight_eps, _var_s/weight_r, 0.0)
+            
+            var_r = var_r.rename(vname_r)
+            var_s = var_s.rename(vname_s)
+
+        else:
+            (var_r, var_s) = filtered_field_calc(var, options, filter_def)
+
+        if save:
+            var_r = save_field(filtered_dataset, var_r)
+            var_s = save_field(filtered_dataset, var_s)
+            # for debugging
+            _var_r = save_field(filtered_dataset, _var_r)
+            _var_s = save_field(filtered_dataset, _var_s)
+
+    return (var_r, var_s)
+
 def filtered_deformation(source_dataset, ref_dataset, derived_dataset,
                          filtered_dataset,
                          options, filter_def,
@@ -635,5 +879,80 @@ def quadratic_subfilter(source_dataset,  ref_dataset, derived_dataset,
     s_var1var2 = var1var2_r - var1_r * var2_r
 
     s_var1var2.name = f"s({v1_name:s},{v2_name:s})_on_{grid:s}"
+
+    return (s_var1var2, var1var2, var1var2_r, var1var2_s)
+
+def weighted_quadratic_subfilter(source_dataset,  ref_dataset, derived_dataset,
+                                 filtered_dataset, options, filter_def,
+                                 v1_name, v2_name, grid='p', weight=None) :
+    r"""
+    Create filtered versions of pair of input variables on required grid.
+
+    Stored in derived_dataset.
+    Computes :math:`s(\phi,\psi) = (\phi\psi)^r - \phi^r\psi^r.`
+
+    Args:
+        source_dataset  : NetCDF dataset for input
+        ref_dataset     : NetCDF dataset for input containing reference
+                          profiles. Can be None
+        derived_dataset : NetCDF dataset for derived data
+        filtered_dataset: NetCDF dataset for derived data
+        options         : General options e.g. FFT method used.
+        filter_def      : 1 or 2D filter
+        v1_name         : Variable names.
+        v2_name         : Variable names.
+        weight          : xarray DataArray for weight field (e.g. density, indicator function)
+
+    Returns
+    -------
+        s(var1,var2) data array.
+        vdims dimensions of var1
+
+    """
+    
+    v1 = get_data_on_grid(source_dataset,  ref_dataset, v1_name,
+                          derived_dataset=derived_dataset,
+                          options=options,
+                          grid=grid, 
+                          )
+
+    (var1_r, var1_s) = weighted_filter_field(v1, filtered_dataset, options,
+                                             filter_def, weight=weight)
+
+    if v2_name == v1_name:
+        v2 = v1
+        (var2_r, var2_s) = (var1_r, var1_s)
+    else:
+        v2 = get_data_on_grid(source_dataset, ref_dataset,v2_name, 
+                             derived_dataset=derived_dataset,
+                             options=options,
+                             grid=grid, 
+                             )
+
+        (var2_r, var2_s) = weighted_filter_field(v2, filtered_dataset, options,
+                                                 filter_def, weight=weight)
+
+    var1var2_name = v1.name + '.' + v2.name
+    if var1var2_name in derived_dataset['ds'].variables:
+        var1var2 =  derived_dataset['ds'][var1var2_name]
+    else:
+        var1var2 = v1 * v2
+        var1var2.name = var1var2_name
+
+    logger.info(f"Filtering {v1_name:s}*{v2_name:s}")
+
+#    var1var2 = re_chunk(var1var2)
+
+    (var1var2_r, var1var2_s) = weighted_filter_field(var1var2, filtered_dataset, options,
+                                                     filter_def, weight=weight, save=False)
+
+    s_var1var2 = var1var2_r - var1_r * var2_r
+
+    sname = f"s({v1_name:s},{v2_name:s})_on_{grid:s}"
+
+    if weight is not None:
+        sname = sname+'_'+weight.name+'-weighted'
+
+    s_var1var2.name = sname
 
     return (s_var1var2, var1var2, var1var2_r, var1var2_s)
