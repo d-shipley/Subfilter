@@ -20,9 +20,9 @@ def inv(k):
 
 # dirroot = 'C:/Users/paclk/OneDrive - University of Reading/'
 # dirroot = 'C:/Users/xm904103/OneDrive - University of Reading/'
-dirroot = 'E:/Data/'
+dirroot = 'F:/Data/'
 
-test_case = 0
+test_case =0
 if test_case == 0:
     reflab = 'Ref 50 m'
     config_file = 'config_test_case_0.yaml'
@@ -198,6 +198,6 @@ axa[2].set_xlabel(r'Wavenumber m$^{-1}$')
 axa[2].set_ylabel(r'$G(k)\times G(k)^*$')
 
 plt.tight_layout()
-plt.savefig(indir + 'filter_fit.pdf')
+plt.savefig(indir + 'filter_fit.png', dpi=300)
 
 dso.close()

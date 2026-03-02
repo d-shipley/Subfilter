@@ -45,7 +45,7 @@ from monc_utils.io.dataout import setup_child_file
 
 dirroot = 'E:/Data/'
 
-var_names_spec = ['w']  # list of variable names to evaluate
+var_names_spec = []  # list of variable names to evaluate
         #   - leave empty to work on all present variables
         #   - populate with string variable names to work on specified list
 # ---------------------------------- USER SETTINGS ----------------------------------

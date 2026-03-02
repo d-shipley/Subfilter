@@ -9,8 +9,6 @@ import xarray as xr
 
 import matplotlib.pyplot as plt
 
-from pathlib import Path 
-
 def inv(k):
     return 1.0 / k
 
@@ -39,7 +37,7 @@ def fit_ISR(kE_k_ref):
 
     kE_k_idl[:] = kE_k_max * (k_ref.values/ k_at_kE_max)**(-2/3)
     
-    return kE_k_idl
+    return kE_k_idl, max_energy_index
 
 def fit_gen_gaussian(idl_filt):
     
@@ -89,7 +87,7 @@ def fit_gen_gaussian(idl_filt):
 
 # dirroot = 'C:/Users/paclk/OneDrive - University of Reading/'
 # dirroot = 'C:/Users/xm904103/OneDrive - University of Reading/'
-dirroot = 'E:/Data/'
+dirroot = 'F:/Data/'
 
 test_case = 0
 if test_case == 0:
@@ -105,7 +103,7 @@ if test_case == 0:
     max_e_range = (0, 2)
     ylims=[0.00001,0.01]
     xlims2 = [0.001,0.01]
-    wn_thresh =2.1E-3
+    wn_thresh =1E-3
 
 elif test_case == 1:
     reflab = 'Ref 5 m'
@@ -154,13 +152,11 @@ k = k_ref.copy()
 
 k_angular = dso['hwaven']
 
-#kE_k = k * E_k
-
 kE_k_ref = k_ref * E_k_ref
 
 #%% Compute idealised k^-5/3 spectrum (so plotting k * k^-5/3 = k^-2/3)
 
-kE_k_idl = fit_ISR(kE_k_ref)
+kE_k_idl, max_energy_index = fit_ISR(kE_k_ref)
 
 #%% Compute ideal filter function and reference 
 
@@ -172,7 +168,7 @@ idl_ref[:] = 1.0
 # xpv, ypv, [(alpha,   sigma,   del_f), 
 #                   (alpha_g, sigma_g, del_f_g)] = fit_gen_gaussian(idl_filt)
 
-xpv, ypv, fitted_parameters = fit_gen_gaussian(idl_filt)
+xpv, ypv, fitted_parameters = fit_gen_gaussian(idl_filt[max_energy_index:])
 
 #%% Plot Energy Density Spectrum
 
