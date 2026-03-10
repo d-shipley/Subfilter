@@ -6,7 +6,7 @@ subfilter.py
 
 Created on Tue Oct 23 11:07:05 2018
 
-@author: Peter Clark
+@authors: Peter Clark, Dan Shipley
 """
 import yaml
 import monc_utils
