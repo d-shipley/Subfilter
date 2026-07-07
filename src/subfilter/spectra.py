@@ -233,7 +233,8 @@ def spectrum_ave_1D_field(var, options, dx, dy):
 
     # Spectra in y-direction (mean removed)
 
-    if global_config.get('no_dask', False):
+    # this is a safer check, as variables can be small enough to be pure Numpy arrays even with no_dask = False
+    if global_config.get('no_dask', False) or var.chunks is None: 
         temp2 = np.fft.rfft((var.values - var.values.mean(axis = yx, keepdims = True, dtype = 'float64')), axis = yx)
     else:
         field = (var - var.mean(dim=(yname))).data.rechunk(chunks={yx:ny})
@@ -246,7 +247,7 @@ def spectrum_ave_1D_field(var, options, dx, dy):
     ydir[:,-1,:] /= 2
 
     # Repeat for x-direction
-    if global_config.get('no_dask', False):
+    if global_config.get('no_dask', False) or var.chunks is None:
         temp2 = np.fft.rfft((var.values - var.values.mean(axis = xx, keepdims = True, dtype = 'float64')), axis = xx)
     else:
         field = (var - var.mean(dim=(xname))).data.rechunk(chunks={xx:nx})
@@ -305,8 +306,8 @@ def spectrum_ave_1D_field(var, options, dx, dy):
                              "long_name": "height above surface"}
     spectrum_y['ywaven'].attrs = {"units": "rad m-1",
                            "long_name": "spectral wavenumber, y-direction"}
-    spectrum_y['xwavel'].attrs = {"units": "m",
-                           "long_name": "spectral wavelength, x-direction"}
+    spectrum_y['ywavel'].attrs = {"units": "m",
+                           "long_name": "spectral wavelength, y-direction"}
 
     return spectrum_x, spectrum_y
 
@@ -346,6 +347,288 @@ def spectrum_ave_1D(ds, derived_dataset, vname, options, dx, dy):
     _ = save_field(derived_dataset, spectrum_y)
 
     return spectrum_x, spectrum_y
+
+def cross_spectrum_ave_1D_fields(var1, var2, options, dx, dy):
+    """
+    Compute averaged 1D spectra in x and y directions separately.
+    Use real fft of anomalies, Durran et al. (2017), Eq. 13,
+    and average over y results over x direction (and vice versa),
+    handling Nyquist (Kr_delta).
+
+
+    Parameters
+    ----------
+    var : xarray.DataArray
+        Variable to take spectrum.
+    options : dict
+        Options controlling spectrum calculations.
+    dx : float
+        x grid spacing.
+    dy : float
+        y grid spacing.
+
+    Returns
+    -------
+    None.
+
+    """
+    # Ignore divide-by-zero warnings that occur when converting between wavenumbers/frequency/wavelength
+    np.seterr(divide='ignore')
+
+    logger.info(f"Working on 1D cross-spectra for: {var1.name}, {var2.name}.")
+
+    if np.size(var1.shape) != 4:
+        logger.critical("Expecting 4-dimensional data for ", var1.name)
+        logger.critical("FAIL - shape")
+        sys.exit()
+        # FOR OTHER KINDS OF FILES WITH MANY DIFFERENTLY STRUCTURED
+        #   FIELDS, YOU MIGHT USE continue TO SKIP THOSE VARIABLES
+        #   RATHER THAN sys.exit()
+    elif np.size(var2.shape) != 4:
+        logger.critical("Expecting 4-dimensional data for ", var2.name)
+        logger.critical("FAIL - shape")
+        sys.exit()
+
+    # should check that var1, var2 dims are equal here!
+    
+    # Store some parameters
+    # Coordinate positions
+    (tx, xx, yx, zx) = get_string_index(var1.dims,
+                        [time_dim_always_contains, 'x', 'y', 'z'])
+
+    # Time and height names
+    tname = var1.dims[tx]
+    var1   = var1.rename({tname: 'time'})
+    var2   = var2.rename({tname: 'time'})
+    tname = "time"
+    times = var1[tname].values
+    xname = var1.dims[xx]
+    yname = var1.dims[yx]
+    zname = var1.dims[zx]
+    z     = var1[zname].values
+
+    # Coordinate sizes
+    ny = var1.sizes[yname]
+    nx = var1.sizes[xname]
+    nt = var1.sizes[tname]
+    nz = var1.sizes[zname]
+
+    # Horizontal domain lengths
+    L_x = dx*nx
+    L_y = dy*ny
+
+    # units (should add a try, except here to catch the case that the units attr doesn't exist)
+    try:
+        base_unit1 = var1.attrs["units"]
+    except KeyError:
+        base_unit1 = "base_unit1"
+
+    try:
+        base_unit2 = var2.attrs["units"]
+    except KeyError:
+        base_unit2 = "base_unit2"
+
+    #_____________________________________________________________________________
+    # Handle averaged 1D spectra option
+    # Use real fft of anomalies, Durran et al. (2017), Eq. 13,
+    # and average over y results over x direction (and vice versa), handling Nyquist (Kr_delta)
+    #
+    #  This condition could be written as a function, given:
+    #    Input:
+    #          yx, dy, ny (could derive)
+    #          xx, dx, nx (could derive)
+    #          var (as a 4D xarray DataArray, assuming data structured [time,...horiz-dims...,vertical])
+    #          vname (could derive)
+    #          zname
+    #          times
+    #    Returns:
+    #          xarray Dataset containing
+    #              spectral density in y
+    #              spectral density in x
+    #              wavenumbers, wavelengths, frequencies
+    #
+    #
+    #    Alternatively, we could make a function to only return the spectra and deal with Dataset assembly elsewhere,
+    #      in which case this would require very little input.
+    #_____________________________________________________________________________
+
+    # Spectra in y-direction (mean removed)
+
+    if global_config.get('no_dask', False) or var1.chunks is None:
+        temp1 = np.fft.rfft(
+            (var1.values - var1.values.mean(axis = yx, keepdims = True, dtype = 'float64')),
+            axis = yx
+        )
+    else:
+        field1 = (var1 - var1.mean(dim=(yname))).data.rechunk(chunks={yx:ny})
+        temp1 = np.fft.rfft(field1, axis=yx)
+    #endif
+    if global_config.get('no_dask', False) or var2.chunks is None:
+        temp2 = np.fft.rfft(
+            (var2.values - var2.values.mean(axis = yx, keepdims = True, dtype = 'float64')),
+            axis = yx
+        )
+    else:
+        field2 = (var2 - var2.mean(dim=(yname))).data.rechunk(chunks={yx:ny})
+        temp2 = np.fft.rfft(field2, axis=yx)
+    # Average across all x
+    co_ydir = np.mean((temp1*np.conj(temp2)).real, axis = xx) * (dy/(2*np.pi*ny))
+    quad_ydir = np.mean((temp1*np.conj(temp2)).imag, axis = xx) * (dy/(2*np.pi*ny))
+
+    # Halve the Nyqist value
+    # Now assuming that data is structured ["time","yfreq",zname]
+    co_ydir[:,-1,:] /= 2
+    quad_ydir[:,-1,:] /= 2
+
+    # Repeat for x-direction
+    if global_config.get('no_dask', False) or var1.chunks is None:
+        temp1 = np.fft.rfft(
+            (var1.values - var1.values.mean(axis = xx, keepdims = True, dtype = 'float64')),
+            axis = xx
+        )
+    else:
+        field1 = (var1 - var1.mean(dim=(xname))).data.rechunk(chunks={xx:nx})
+        temp1 = np.fft.rfft(field1, axis=xx)
+    #endif
+    if global_config.get('no_dask', False) or var2.chunks is None:
+        temp2 = np.fft.rfft(
+            (var2.values - var2.values.mean(axis = xx, keepdims = True, dtype = 'float64')),
+            axis = xx
+        )
+    else:
+        field2 = (var2 - var2.mean(dim=(xname))).data.rechunk(chunks={xx:nx})
+        temp2 = np.fft.rfft(field2, axis=xx)
+    # Average across all y
+    co_xdir = np.mean((temp1*np.conj(temp2)).real, axis = yx) * (dx/(2*np.pi*nx))
+    quad_xdir = np.mean((temp1*np.conj(temp2)).imag, axis = yx) * (dx/(2*np.pi*nx))
+    co_xdir[:,-1,:] /= 2
+    quad_xdir[:,-1,:] /= 2
+
+    # Useful plotting values
+    fx = np.fft.rfftfreq(nx, d = dx)     # frequencies (1/m) [n/L]
+    fy = np.fft.rfftfreq(ny, d = dy)
+    xwaven = fx*2*np.pi                  # wavenumbers (radians/m) [n2pi/L]
+    ywaven = fy*2*np.pi
+    xwavel = 2*np.pi/xwaven  # 1/fx      # wavelength (m)
+    ywavel = 2*np.pi/ywaven  # 1/fy
+
+    # Assemble the 1D Datasets
+    co_spectrum_x = xr.DataArray(
+        co_xdir, 
+        dims=["time", "xfreq", zname],
+        coords = {"time": (["time"],times),
+                  zname: ([zname], z),
+                  "xfreq": (["xfreq"],fx) },
+        name = f'co_spec_xdir_{var1.name}_{var2.name}',
+        attrs = {"units": f"m * {base_unit1} * {base_unit2}",
+                 "long_name": f"{var1.name}, {var2.name} co-spectrum, x-direction"}
+    )
+    quad_spectrum_x = xr.DataArray(
+        quad_xdir, 
+        dims=["time", "xfreq", zname],
+        coords = {"time": (["time"],times),
+                  zname: ([zname], z),
+                  "xfreq": (["xfreq"],fx) },
+        name = f'quad_spec_xdir_{var1.name}_{var2.name}',
+        attrs = {"units": f"m * {base_unit1} * {base_unit2}",
+                 "long_name": f"{var1.name}, {var2.name} quadrature spectrum, x-direction"}
+    )
+    alt_coords_x = {"xwaven":(['xfreq'], xwaven),
+                    "xwavel":(['xfreq'], xwavel)}
+
+    co_spectrum_x = co_spectrum_x.assign_coords(alt_coords_x)
+    quad_spectrum_x = quad_spectrum_x.assign_coords(alt_coords_x)
+
+    for spec_x in [co_spectrum_x, quad_spectrum_x]:
+        spec_x['xfreq'].attrs = {"units": "m-1",
+                                 "long_name": "spectral frequency, x-direction"}
+        spec_x[zname].attrs = {"units": "m",
+                               "long_name": "height above surface"}
+        spec_x['xwaven'].attrs = {"units": "rad m-1",
+                                  "long_name": "spectral wavenumber, x-direction"}
+        spec_x['xwavel'].attrs = {"units": "m",
+                                  "long_name": "spectral wavelength, x-direction"}
+
+    co_spectrum_y = xr.DataArray(
+        co_ydir, 
+        dims=["time", "yfreq", zname],
+        coords = {"time": (["time"],times),
+                  zname: ([zname], z),
+                  "yfreq": (["yfreq"],fy) },
+        name = f'co_spec_ydir_{var1.name}_{var2.name}',
+        attrs = {"units": f"m * {base_unit1} * {base_unit2}",
+                 "long_name": f"{var1.name}, {var2.name} co-spectrum, y-direction"}
+    )
+    quad_spectrum_y = xr.DataArray(
+        quad_ydir, 
+        dims=["time", "yfreq", zname],
+        coords = {"time": (["time"],times),
+                  zname: ([zname], z),
+                  "yfreq": (["yfreq"],fy) },
+        name = f'quad_spec_ydir_{var1.name}_{var2.name}',
+        attrs = {"units": f"m * {base_unit1} * {base_unit2}",
+                 "long_name": f"{var1.name}, {var2.name} quadrature spectrum, y-direction"}
+    )
+    alt_coords_y = {"ywaven":(['yfreq'], ywaven),
+                    "ywavel":(['yfreq'], ywavel)}
+    
+    co_spectrum_y = co_spectrum_y.assign_coords(alt_coords_y)
+    quad_spectrum_y = quad_spectrum_y.assign_coords(alt_coords_y)
+
+    for spec_y in [co_spectrum_y, quad_spectrum_y]:
+        spec_y['yfreq'].attrs = {"units": "m-1",
+                                 "long_name": "spectral frequency, y-direction"}
+        spec_y[zname].attrs = {"units": "m",
+                               "long_name": "height above surface"}
+        spec_y['ywaven'].attrs = {"units": "rad m-1",
+                                  "long_name": "spectral wavenumber, y-direction"}
+        spec_y['ywavel'].attrs = {"units": "m",
+                                  "long_name": "spectral wavelength, y-direction"}
+
+    return co_spectrum_x, co_spectrum_y, quad_spectrum_x, quad_spectrum_y
+
+def cross_spectrum_ave_1D(ds, derived_dataset, vname1, vname2, options, dx, dy):
+    """
+    Compute averaged 1D spectra in x and y directions separately.
+    Use real fft of anomalies, Durran et al. (2017), Eq. 13,
+    and average over y results over x direction (and vice versa),
+    handling Nyquist (Kr_delta).
+
+
+    Parameters
+    ----------
+    ds : xarray Dataset
+        Input data.
+    derived_dataset : dict
+        Output data.    'ds':xarray dataset 'file': Path to output file.
+    vname : str
+        Variable name (in ds).
+    options : dict
+        Options controlling spectrum calculations.
+    dx : float
+        x grid spacing.
+    dy : float
+        y grid spacing.
+
+    Returns
+    -------
+    co_spectrum_x, co_spectrum_y, quad_spectrum_x, quad_spectrum_y : xarray DataArrays
+        the co-spectrum of var1, var2 averaged in the x- and y-directions, and the quadrature spectrum
+        of var1, var2 averaged in the x- and y-directions
+
+    """
+
+    var1 = ds[vname1]
+    var2 = ds[vname2]
+    
+    co_spectrum_x, co_spectrum_y, quad_spectrum_x, quad_spectrum_y = \
+        cross_spectrum_ave_1D_fields(var1, var2, options, dx, dy)
+    _ = save_field(derived_dataset, co_spectrum_x)
+    _ = save_field(derived_dataset, co_spectrum_y)
+    _ = save_field(derived_dataset, quad_spectrum_x)
+    _ = save_field(derived_dataset, quad_spectrum_y)
+
+    return co_spectrum_x, co_spectrum_y, quad_spectrum_x, quad_spectrum_y
 
 #===================================================================
 # Get PSD 1D (total radial power spectrum)
