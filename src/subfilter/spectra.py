@@ -305,8 +305,8 @@ def spectrum_ave_1D_field(var, options, dx, dy):
                              "long_name": "height above surface"}
     spectrum_y['ywaven'].attrs = {"units": "rad m-1",
                            "long_name": "spectral wavenumber, y-direction"}
-    spectrum_y['xwavel'].attrs = {"units": "m",
-                           "long_name": "spectral wavelength, x-direction"}
+    spectrum_y['ywavel'].attrs = {"units": "m",
+                           "long_name": "spectral wavelength, y-direction"}
 
     return spectrum_x, spectrum_y
 
