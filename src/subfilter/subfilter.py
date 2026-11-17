@@ -266,7 +266,7 @@ def weighted_filter_variable_pair_list(source_dataset, ref_dataset, derived_data
 
     Returns
     -------
-        var_list : list of lists of pairs strings representing variable names.
+        var_list : list of lists of pairs of strings representing variable names.
 
     """
     if (var_list==None):
@@ -298,7 +298,7 @@ def weighted_filter_variable_pair_list(source_dataset, ref_dataset, derived_data
             logger.info(f"Calculating s({v[0]:s},{v[1]:s})")
             svars = weighted_quadratic_subfilter(
                 source_dataset, ref_dataset, derived_dataset, filtered_dataset,
-                options, filter_def, v[0], v[1], grid=grid, weights=None
+                options, filter_def, v[0], v[1], grid=grid, weight=None
             )
 
             (s_var1var2, var1var2, var1var2_r, var1var2_s) = svars
@@ -309,6 +309,74 @@ def weighted_filter_variable_pair_list(source_dataset, ref_dataset, derived_data
                     save_field(filtered_dataset, f)
 
                 save_field(derived_dataset, var1var2)
+
+    return var_list
+
+def weighted_filter_variable_triple_list(source_dataset, ref_dataset, derived_dataset,
+                                         filtered_dataset, options, filter_def,
+                                         var_list=None, grid='p', weights=None) :
+    """
+    Create filtered versions of pairs input variables on A grid.
+
+    Stored in derived_dataset.
+
+    Args:
+        source_dataset  : NetCDF dataset for input
+        ref_dataset     : NetCDF dataset for input containing reference
+                          profiles. Can be None
+        derived_dataset : NetCDF dataset for derived data
+        filtered_dataset: NetCDF dataset for derived data
+        options         : General options e.g. FFT method used.
+        filter_def      : 1 or 2D filter
+        var_list=None   : List of lists of triples of variable names.
+        default provided by get_default_variable_pair_list()
+        weights=None    : xr.Dataset of weights for weighted filtering
+
+    Returns
+    -------
+        var_list : list of lists of triples of strings representing variable names.
+
+    """
+    if (var_list==None):
+        var_list = get_default_variable_triple_list()
+        logger.info("Default list:\n",var_list)
+
+    if weights is not None:
+        for wname in weights:
+            for v in var_list:
+
+                logger.info(f"Calculating s({v[0]:s},{v[1]:s},{v[2]:s})")
+                svars = weighted_cubic_subfilter(
+                    source_dataset, ref_dataset, derived_dataset, filtered_dataset,
+                    options, filter_def, v[0], v[1], v[2], grid=grid, weight=weights[wname]
+                )
+                
+                (s_var1var2var3, var1var2var3, var1var2var3_r, var1var2var3_s) = svars
+                
+                save_field(filtered_dataset, s_var1var2var3)
+                if options['save_all'].lower() == 'yes':
+                    for f in ( var1var2var3_r, var1var2var3_s):
+                        save_field(filtered_dataset, f)
+
+                    save_field(derived_dataset, var1var2var3)
+
+    else:
+        for v in var_list:
+
+            logger.info(f"Calculating s({v[0]:s},{v[1]:s},{v[2]:s})")
+            svars = weighted_cubic_subfilter(
+                source_dataset, ref_dataset, derived_dataset, filtered_dataset,
+                options, filter_def, v[0], v[1], v[2], grid=grid, weight=None
+            )
+            
+            (s_var1var2var3, var1var2var3, var1var2var3_r, var1var2var3_s) = svars
+            
+            save_field(filtered_dataset, s_var1var2var3)
+            if options['save_all'].lower() == 'yes':
+                for f in ( var1var2var3_r, var1var2var3_s):
+                    save_field(filtered_dataset, f)
+                    
+                save_field(derived_dataset, var1var2var3)
 
     return var_list
 
@@ -956,3 +1024,134 @@ def weighted_quadratic_subfilter(source_dataset,  ref_dataset, derived_dataset,
     s_var1var2.name = sname
 
     return (s_var1var2, var1var2, var1var2_r, var1var2_s)
+
+def weighted_cubic_subfilter(source_dataset,  ref_dataset, derived_dataset,
+                             filtered_dataset, options, filter_def,
+                             v1_name, v2_name, v3_name, grid='p', weight=None) :
+    r"""
+    Create filtered versions of triplets of input variables on required grid.
+
+    Stored in derived_dataset.
+    Computes :math:`s(\phi,\psi) = (\phi\psi)^r - \phi^r\psi^r.`
+
+    Args:
+        source_dataset  : NetCDF dataset for input
+        ref_dataset     : NetCDF dataset for input containing reference
+                          profiles. Can be None
+        derived_dataset : NetCDF dataset for derived data
+        filtered_dataset: NetCDF dataset for derived data
+        options         : General options e.g. FFT method used.
+        filter_def      : 1 or 2D filter
+        v1_name         : Variable name.
+        v2_name         : Variable name.
+        v3_name         : Variable name.
+        weight          : xarray DataArray for weight field (e.g. density, indicator function)
+
+    Returns
+    -------
+        s(var1,var2,var3) data array.
+        vdims dimensions of var1
+
+    """
+    
+    v1 = get_data_on_grid(source_dataset,  ref_dataset, v1_name,
+                          derived_dataset=derived_dataset,
+                          options=options,
+                          grid=grid, 
+                          )
+
+    (var1_r, var1_s) = weighted_filter_field(v1, filtered_dataset, options,
+                                             filter_def, weight=weight)
+
+    if v2_name == v1_name:
+        v2 = v1
+        (var2_r, var2_s) = (var1_r, var1_s)
+    else:
+        v2 = get_data_on_grid(source_dataset, ref_dataset, v2_name, 
+                             derived_dataset=derived_dataset,
+                             options=options,
+                             grid=grid, 
+                             )
+
+        (var2_r, var2_s) = weighted_filter_field(v2, filtered_dataset, options,
+                                                 filter_def, weight=weight)
+    
+    if v3_name == v1_name:
+        v3 = v1
+        (var3_r, var3_s) = (var1_r, var1_s)
+    elif v3_name == v2_name:
+        v3 = v2
+        (var3_r, var3_s) = (var2_r, var2_s)
+    else:
+        v3 = get_data_on_grid(source_dataset, ref_dataset, v3_name, 
+                             derived_dataset=derived_dataset,
+                             options=options,
+                             grid=grid, 
+                             )
+
+        (var3_r, var3_s) = weighted_filter_field(v3, filtered_dataset, options,
+                                                 filter_def, weight=weight)
+
+    var1var2var3_name = v1.name + '.' + v2.name + '.' + v3.name
+    if var1var2var3_name in derived_dataset['ds'].variables:
+        var1var2var3 =  derived_dataset['ds'][var1var2var3_name]
+    else:
+        var1var2var3 = v1 * v2 * v3
+        var1var2var3.name = var1var2var3_name
+
+    logger.info(f"Filtering {v1_name:s}*{v2_name:s}*{v3_name:s}")
+
+    (var1var2var3_r, var1var2var3_s) = weighted_filter_field(var1var2var3, filtered_dataset, options,
+                                                             filter_def, weight=weight, save=False)
+
+    # load s_varivarj for all {ij} (symmetrized)
+    weight_str = ""
+    if weight is not None:
+        weight_str += f"_{weight.name}-weighted"
+
+    # TO-DO: compute s(vi,vj) if it does not exist in filtered_dataset 
+    try:
+        s_var1var2 = filtered_dataset['ds'][f"s({v1_name:s},{v2_name:s})_on_{grid:s}"+weight_str]
+    except KeyError:
+        try:
+            s_var1var2 = filtered_dataset['ds'][f"s({v2_name:s},{v1_name:s})_on_{grid:s}"+weight_str]
+        except KeyError:
+            print(
+                f"Error: Neither s({v1_name:s},{v2_name:s})_on_{grid:s}{weight_str} nor "\
+                f"s({v1_name:s},{v2_name:s})_on_{grid:s}{weight_str} found in filtered_dataset; "\
+                f"exiting."
+            )
+            sys.exit(1)
+    try:
+        s_var2var3 = filtered_dataset['ds'][f"s({v2_name:s},{v3_name:s})_on_{grid:s}"+weight_str]
+    except KeyError:
+        try:
+            s_var2var3 = filtered_dataset['ds'][f"s({v3_name:s},{v2_name:s})_on_{grid:s}"+weight_str]
+        except KeyError:
+            print(
+                f"Error: Neither s({v2_name:s},{v3_name:s})_on_{grid:s}{weight_str} nor "\
+                f"s({v3_name:s},{v2_name:s})_on_{grid:s}{weight_str} found in filtered_dataset; "\
+                f"exiting."
+            )
+            sys.exit(1)
+    try:
+        s_var3var1 = filtered_dataset['ds'][f"s({v3_name:s},{v1_name:s})_on_{grid:s}"+weight_str]
+    except KeyError:
+        try:
+            s_var3var1 = filtered_dataset['ds'][f"s({v1_name:s},{v3_name:s})_on_{grid:s}"+weight_str]
+        except KeyError:
+            print(
+                f"Error: Neither s({v3_name:s},{v1_name:s})_on_{grid:s}{weight_str} nor "\
+                f"s({v1_name:s},{v3_name:s})_on_{grid:s}{weight_str} found in filtered_dataset; "\
+                f"exiting."
+            )
+            sys.exit(1)
+
+    s_var1var2var3 = var1var2var3_r - var1_r * s_var2var3 - var2_r * s_var3var1 - var3_r * s_var1var2 \
+        - var1_r * var2_r * var3_r
+
+    sname = f"s({v1_name:s},{v2_name:s},{v3_name:s})_on_{grid:s}{weight_str}"
+
+    s_var1var2var3.name = sname
+
+    return (s_var1var2var3, var1var2var3, var1var2var3_r, var1var2var3_s)
