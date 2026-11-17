@@ -828,8 +828,10 @@ def weighted_filter_field(var, filtered_dataset, options, filter_def, weight=Non
             (_var_r, _var_s) = filtered_field_calc(weighted_var, options, filter_def)
 
             # fill value has to be zero, not np.nan, so as not to break sum rules
-            var_r = xr.where(weight_r > weight_eps, _var_r/weight_r, 0.0)
-            var_s = xr.where(weight_r > weight_eps, _var_s/weight_r, 0.0)
+            valid_weight = weight_r > weight_eps
+            safe_weight_r = weight_r.where(valid_weight, other=1.0)
+            var_r = xr.where(valid_weight, _var_r / safe_weight_r, 0.0)
+            var_s = xr.where(valid_weight, _var_s / safe_weight_r, 0.0)
             
             var_r = var_r.rename(vname_r)
             var_s = var_s.rename(vname_s)
@@ -840,9 +842,10 @@ def weighted_filter_field(var, filtered_dataset, options, filter_def, weight=Non
         if save:
             var_r = save_field(filtered_dataset, var_r)
             var_s = save_field(filtered_dataset, var_s)
-            # for debugging
-            _var_r = save_field(filtered_dataset, _var_r)
-            _var_s = save_field(filtered_dataset, _var_s)
+            if weight is not None:
+                # Save weighted numerators for debugging.
+                _var_r = save_field(filtered_dataset, _var_r)
+                _var_s = save_field(filtered_dataset, _var_s)
 
     return (var_r, var_s)
 
